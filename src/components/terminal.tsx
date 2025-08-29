@@ -1,5 +1,4 @@
 
-
 "use client";
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
@@ -9,12 +8,20 @@ import { useToast } from "@/hooks/use-toast";
 import Image from 'next/image';
 import { useAuth } from './auth-provider';
 import { useRouter } from 'next/navigation';
-import { Clock } from 'lucide-react';
+import { Clock, Play, Pause, StepForward, StepBack, ListMusic, Mic, MicOff } from 'lucide-react';
+import { Button } from '@/components/ui/button';
 
 type HistoryItem = {
   id: number;
   content: React.ReactNode;
 };
+
+type Song = {
+  title: string;
+  download_url: string;
+};
+
+type Playlist = Song[];
 
 const UserPrompt = ({ user }: { user: string | null }) => (
   <span className="text-accent">
@@ -29,7 +36,10 @@ const HelpComponent = () => (
       <li><span className="text-accent font-bold">gemini [question]</span> - Ask a question to Gemini AI.</li>
       <li><span className="text-accent font-bold">flux [prompt]</span> - Generate an image with Flux.</li>
       <li><span className="text-accent font-bold">video [search|url]</span> - Search for a video and play it.</li>
-      <li><span className="text-accent font-bold">sing [song name]</span> - Search for a song and play the audio.</li>
+      <li><span className="text-accent font-bold">sing [song name]</span> - Plays a song and adds it to the playlist.</li>
+      <li><span className="text-accent font-bold">playlist add [song]</span> - Adds a song to the playlist.</li>
+      <li><span className="text-accent font-bold">playlist show</span> - Shows the current playlist.</li>
+      <li><span className="text-accent font-bold">playlist play</span> - Plays the current playlist.</li>
       <li><span className="text-accent font-bold">dl [URL]</span> - Download video from a URL (IG, FB, YT, etc.).</li>
       <li><span className="text-accent font-bold">waiko [waifu|neko]</span> - Display a random waifu or neko image.</li>
       <li><span className="text-accent font-bold">pinterest [query] [amount]</span> - Get images from Pinterest.</li>
@@ -95,8 +105,16 @@ export default function Terminal() {
   const [theme, setTheme] = useState('purple');
   const [showClock, setShowClock] = useState(true);
   const [startTime] = useState(Date.now());
+  const [playlist, setPlaylist] = useState<Playlist>([]);
+  const [currentTrack, setCurrentTrack] = useState<number>(0);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [isListening, setIsListening] = useState(false);
+  
   const endOfHistoryRef = useRef<HTMLDivElement>(null);
   const initialized = useRef(false);
+  const audioRef = useRef<HTMLAudioElement>(null);
+  const recognitionRef = useRef<any>(null);
+
   const { toast } = useToast();
   const { user, logout } = useAuth();
   const router = useRouter();
@@ -105,17 +123,105 @@ export default function Terminal() {
   const addHistory = useCallback((item: React.ReactNode) => {
     setHistory(prev => [...prev, { id: Date.now() + Math.random(), content: item }]);
   }, []);
-
+  
   useEffect(() => {
     if (!initialized.current) {
-      initialized.current = true;
-      addHistory(<TypingAnimation text="Initializing Ryux..." onComplete={() => addHistory(<WelcomeComponent />)} />);
+        initialized.current = true;
+        addHistory(<TypingAnimation text="Initializing Ryux..." onComplete={() => addHistory(<WelcomeComponent/>)} />);
     }
   }, [addHistory]);
+
 
   useEffect(() => {
     endOfHistoryRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [history]);
+
+  useEffect(() => {
+    if (audioRef.current) {
+      if (isPlaying) {
+        audioRef.current.play().catch(e => console.error("Audio play failed:", e));
+      } else {
+        audioRef.current.pause();
+      }
+    }
+  }, [isPlaying]);
+
+  useEffect(() => {
+    if (playlist.length > 0 && audioRef.current) {
+        const currentSrc = playlist[currentTrack]?.download_url;
+        if (currentSrc && audioRef.current.src !== currentSrc) {
+            audioRef.current.src = currentSrc;
+            if(isPlaying) audioRef.current.play().catch(e => console.error("Audio play failed:", e));
+        }
+    }
+  }, [playlist, currentTrack, isPlaying]);
+
+
+  const handlePlayNext = useCallback(() => {
+    if (playlist.length === 0) return;
+    setCurrentTrack(prev => (prev + 1) % playlist.length);
+    setIsPlaying(true);
+  }, [playlist.length]);
+
+  const handlePlayPrev = () => {
+    if (playlist.length === 0) return;
+    setCurrentTrack(prev => (prev - 1 + playlist.length) % playlist.length);
+    setIsPlaying(true);
+  };
+
+  const togglePlayPause = () => {
+    if (playlist.length > 0) {
+      setIsPlaying(prev => !prev);
+    }
+  };
+  
+  const setupSpeechRecognition = useCallback(() => {
+    if ('webkitSpeechRecognition' in window) {
+      const recognition = new (window as any).webkitSpeechRecognition();
+      recognition.continuous = false;
+      recognition.interimResults = false;
+      recognition.lang = 'en-US';
+
+      recognition.onstart = () => {
+        setIsListening(true);
+        toast({ title: "Listening...", description: "Speak your command." });
+      };
+
+      recognition.onresult = (event: any) => {
+        const transcript = event.results[0][0].transcript;
+        setInput(transcript);
+        handleCommand(transcript);
+      };
+
+      recognition.onerror = (event: any) => {
+        console.error('Speech recognition error:', event.error);
+        toast({ variant: "destructive", title: "Voice Error", description: event.error });
+        setIsListening(false);
+      };
+
+      recognition.onend = () => {
+        setIsListening(false);
+      };
+
+      recognitionRef.current = recognition;
+    } else {
+      toast({ variant: "destructive", title: "Unsupported", description: "Your browser does not support voice recognition." });
+    }
+  }, [toast]);
+
+  useEffect(() => {
+    setupSpeechRecognition();
+  }, [setupSpeechRecognition]);
+  
+  const toggleListening = () => {
+    if (isListening) {
+      recognitionRef.current?.stop();
+    } else {
+      recognitionRef.current?.start();
+    }
+  };
+
+
 
   const handleSetTheme = (newTheme: string) => {
     const root = document.documentElement;
@@ -271,24 +377,71 @@ export default function Terminal() {
         }
         break;
       case 'sing':
-        if (!query) {
-          addHistory(<p className="text-red-500">Error: Please provide a song name to search for.</p>);
-          break;
-        }
-        addHistory(<p>Searching for song: <span className="text-primary">{query}</span>...</p>);
-        const songResult = await getSong(query);
-        if (songResult.error) {
-            addHistory(<p className="text-red-500">Error: {songResult.error}</p>);
-        } else {
-            addHistory(
-                <div>
-                    <p>Now playing: <span className="font-bold text-primary">{songResult.title}</span></p>
-                    <audio controls className="w-full max-w-2xl mt-2">
-                        <source src={songResult.download_url} type="audio/mpeg" />
-                        Your browser does not support the audio element.
-                    </audio>
-                </div>
-            )
+      case 'playlist':
+        if (cmd === 'sing') {
+          if (!query) {
+            addHistory(<p className="text-red-500">Error: Please provide a song name to search for.</p>);
+            break;
+          }
+          addHistory(<p>Searching for song: <span className="text-primary">{query}</span>...</p>);
+          const songResult = await getSong(query);
+          if (songResult.error) {
+              addHistory(<p className="text-red-500">Error: {songResult.error}</p>);
+          } else if (songResult.download_url) {
+              const newSong: Song = { title: songResult.title!, download_url: songResult.download_url! };
+              addHistory(<p>Added to playlist: <span className="font-bold text-primary">{newSong.title}</span></p>);
+              setPlaylist(prev => {
+                  const newPlaylist = [...prev, newSong];
+                  setCurrentTrack(newPlaylist.length - 1);
+                  return newPlaylist;
+              });
+              setIsPlaying(true);
+          }
+        } else { // playlist commands
+            const subCmd = args[0]?.toLowerCase();
+            const songQuery = args.slice(1).join(' ');
+
+            if (subCmd === 'add') {
+                 if (!songQuery) {
+                    addHistory(<p className="text-red-500">Error: Please provide a song name to add.</p>);
+                    break;
+                 }
+                 addHistory(<p>Searching to add: <span className="text-primary">{songQuery}</span>...</p>);
+                 const songResult = await getSong(songQuery);
+                 if (songResult.error) {
+                     addHistory(<p className="text-red-500">Error: {songResult.error}</p>);
+                 } else if (songResult.download_url) {
+                     const newSong: Song = { title: songResult.title!, download_url: songResult.download_url! };
+                     addHistory(<p>Added to playlist: <span className="font-bold text-primary">{newSong.title}</span></p>);
+                     setPlaylist(prev => [...prev, newSong]);
+                 }
+            } else if (subCmd === 'show') {
+                if (playlist.length === 0) {
+                    addHistory(<p>Playlist is empty.</p>);
+                } else {
+                    addHistory(
+                        <div>
+                            <p className="text-primary font-bold">Current Playlist:</p>
+                            <ul className="list-decimal list-inside">
+                                {playlist.map((song, index) => (
+                                    <li key={index} className={index === currentTrack ? 'text-accent font-bold' : ''}>
+                                        {song.title}
+                                    </li>
+                                ))}
+                            </ul>
+                        </div>
+                    );
+                }
+            } else if (subCmd === 'play') {
+                 if (playlist.length > 0) {
+                   setIsPlaying(true);
+                   addHistory(<p>Playing playlist.</p>);
+                 } else {
+                   addHistory(<p className="text-red-500">Playlist is empty. Add songs with `sing` or `playlist add`.</p>);
+                 }
+            } else {
+                addHistory(<p className="text-red-500">Invalid playlist command. Use `add`, `show`, or `play`.</p>);
+            }
         }
         break;
       case 'ask':
@@ -601,7 +754,7 @@ export default function Terminal() {
         <h1 className="text-lg text-primary text-glow">Ryux</h1>
         {showClock && <DigitalClock />}
       </div>
-      <div className="flex-grow overflow-y-auto pr-2">
+      <div className="flex-grow overflow-y-auto pr-2 pb-24">
         {history.map(item => (
           <div key={item.id} className="mb-2">
             {item.content}
@@ -610,23 +763,49 @@ export default function Terminal() {
         {isProcessing && <div className="text-accent">Processing...</div>}
         <div ref={endOfHistoryRef} />
       </div>
-      <form onSubmit={handleSubmit} className="flex items-center gap-2 mt-2">
-        <label htmlFor="command-input" className="text-accent flex-shrink-0">
-         <UserPrompt user={user} />
-        </label>
-        <input
-          id="command-input"
-          type="text"
-          value={input}
-          onChange={e => setInput(e.target.value)}
-          className="w-full bg-transparent border-none focus:ring-0 outline-none text-accent placeholder-gray-500 text-glow"
-          placeholder="Type a command..."
-          autoFocus
-          disabled={isProcessing}
-        />
-        <div className={`w-2 h-4 bg-accent animate-blink ${isProcessing ? 'hidden' : ''}`} />
-      </form>
+
+      <div className="absolute bottom-0 left-0 right-0 p-4 bg-black/50 backdrop-blur-md">
+         {playlist.length > 0 && (
+            <div className="flex items-center gap-4 text-foreground">
+                <ListMusic size={24} className="text-accent"/>
+                <div className="flex-grow">
+                    <p className="font-bold text-primary truncate">{playlist[currentTrack].title}</p>
+                    <p className="text-xs text-muted-foreground">Playlist - Track {currentTrack + 1} of {playlist.length}</p>
+                </div>
+                <div className="flex items-center gap-2">
+                    <Button variant="ghost" size="icon" onClick={handlePlayPrev} disabled={playlist.length <= 1}>
+                        <StepBack size={20}/>
+                    </Button>
+                    <Button variant="ghost" size="icon" onClick={togglePlayPause}>
+                        {isPlaying ? <Pause size={20}/> : <Play size={20}/>}
+                    </Button>
+                    <Button variant="ghost" size="icon" onClick={handlePlayNext} disabled={playlist.length <= 1}>
+                        <StepForward size={20}/>
+                    </Button>
+                </div>
+            </div>
+        )}
+        <form onSubmit={handleSubmit} className="flex items-center gap-2 mt-2">
+          <label htmlFor="command-input" className="text-accent flex-shrink-0">
+          <UserPrompt user={user} />
+          </label>
+          <input
+            id="command-input"
+            type="text"
+            value={input}
+            onChange={e => setInput(e.target.value)}
+            className="w-full bg-transparent border-none focus:ring-0 outline-none text-accent placeholder-gray-500 text-glow"
+            placeholder="Type a command or use the mic..."
+            autoFocus
+            disabled={isProcessing || isListening}
+          />
+           <Button variant="ghost" size="icon" type="button" onClick={toggleListening} className={`${isListening ? 'text-red-500 animate-pulse' : 'text-accent'}`}>
+              {isListening ? <MicOff/> : <Mic />}
+           </Button>
+          <div className={`w-2 h-4 bg-accent animate-blink ${isProcessing ? 'hidden' : ''}`} />
+        </form>
+      </div>
+      <audio ref={audioRef} onEnded={handlePlayNext} onError={() => toast({variant: "destructive", title: "Playback Error", description: "Could not play the current track."})} />
     </div>
   );
 }
-
