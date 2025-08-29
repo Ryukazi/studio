@@ -131,6 +131,36 @@ export default function Terminal() {
     }
   }, [addHistory]);
 
+  const getPlaylistKey = useCallback(() => {
+    return `cyberstream_playlist_${user || 'guest'}`;
+  }, [user]);
+
+  useEffect(() => {
+    if (user) {
+      try {
+        const savedPlaylist = localStorage.getItem(getPlaylistKey());
+        if (savedPlaylist) {
+          setPlaylist(JSON.parse(savedPlaylist));
+        }
+      } catch (error) {
+        console.error("Could not load playlist from localStorage", error);
+      }
+    }
+  }, [user, getPlaylistKey]);
+
+  const savePlaylist = useCallback((newPlaylist: Playlist) => {
+      try {
+        localStorage.setItem(getPlaylistKey(), JSON.stringify(newPlaylist));
+      } catch (error) {
+        console.error("Could not save playlist to localStorage", error);
+        toast({
+          variant: "destructive",
+          title: "Save Error",
+          description: "Could not save your playlist. It will be lost on refresh."
+        });
+      }
+  }, [getPlaylistKey, toast]);
+
 
   useEffect(() => {
     endOfHistoryRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -392,6 +422,7 @@ export default function Terminal() {
               addHistory(<p>Added to playlist: <span className="font-bold text-primary">{newSong.title}</span></p>);
               setPlaylist(prev => {
                   const newPlaylist = [...prev, newSong];
+                  savePlaylist(newPlaylist);
                   setCurrentTrack(newPlaylist.length - 1);
                   return newPlaylist;
               });
@@ -413,7 +444,11 @@ export default function Terminal() {
                  } else if (songResult.download_url) {
                      const newSong: Song = { title: songResult.title!, download_url: songResult.download_url! };
                      addHistory(<p>Added to playlist: <span className="font-bold text-primary">{newSong.title}</span></p>);
-                     setPlaylist(prev => [...prev, newSong]);
+                     setPlaylist(prev => {
+                       const newPlaylist = [...prev, newSong];
+                       savePlaylist(newPlaylist);
+                       return newPlaylist;
+                     });
                  }
             } else if (subCmd === 'show') {
                 if (playlist.length === 0) {
